@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<robot name="scara_taller3">
+  <!-- Metros y radianes. Geometría visual y recorrido Z nominales. -->
+  <link name="base">
+    <visual>
+      <origin xyz="0 0 0.026"/>
+      <geometry><box size="0.080 0.080 0.052"/></geometry>
+      <material name="base_oscura"><color rgba="0.24 0.33 0.44 1"/></material>
+    </visual>
+  </link>
+  <link name="eslabon_1">
+    <visual>
+      <origin xyz="0.0695 0 0.006"/>
+      <geometry><box size="0.159 0.032 0.012"/></geometry>
+      <material name="azul"><color rgba="0.20 0.47 0.70 1"/></material>
+    </visual>
+  </link>
+  <joint name="base_giro" type="revolute">
+    <parent link="base"/>
+    <child link="eslabon_1"/>
+    <origin xyz="0 0 0.052"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="3.141592653589793" effort="1" velocity="1"/>
+  </joint>
+  <link name="eslabon_2">
+    <visual>
+      <origin xyz="0.062 0 0.005"/>
+      <geometry><box size="0.144 0.025 0.010"/></geometry>
+      <material name="verde"><color rgba="0.15 0.60 0.55 1"/></material>
+    </visual>
+  </link>
+  <joint name="codo_giro" type="revolute">
+    <parent link="eslabon_1"/>
+    <child link="eslabon_2"/>
+    <origin xyz="0.139 0 0.014"/>
+    <axis xyz="0 0 -1"/>
+    <limit lower="0" upper="3.141592653589793" effort="1" velocity="1"/>
+  </joint>
+  <link name="cremallera_marcador">
+    <visual>
+      <origin xyz="0 0 -0.035"/>
+      <geometry><box size="0.007 0.007 0.070"/></geometry>
+      <material name="morado"><color rgba="0.56 0.30 0.64 1"/></material>
+    </visual>
+  </link>
+  <joint name="marcador_z" type="prismatic">
+    <parent link="eslabon_2"/>
+    <child link="cremallera_marcador"/>
+    <origin xyz="0.124 0 0.014"/>
+    <axis xyz="0 0 -1"/>
+    <limit lower="0" upper="0.010" effort="1" velocity="0.05"/>
+  </joint>
+  <link name="punta"/>
+  <joint name="punta_fija" type="fixed">
+    <parent link="cremallera_marcador"/>
+    <child link="punta"/>
+    <origin xyz="0 0 -0.070"/>
+  </joint>
+</robot>
