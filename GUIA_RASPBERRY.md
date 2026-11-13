@@ -61,3 +61,24 @@ python3 gui_scara.py
 ```
 
 Si falta Tkinter, instálalo con `sudo apt install python3-tk`. La GUI ejecuta la simulación. El movimiento de los servos se prueba con el script de terminal.
+
+## Calibrar los servos
+
+Conecta un servo a la vez y activa el entorno. El primer pulso es el centro nominal de 1500 µs. Antes de activarlo, libera el mecanismo si desconoces la posición que tomará.
+
+```bash
+source ~/.venv-scara/bin/activate
+python calibrar_pca9685.py 0  # base
+python calibrar_pca9685.py 1  # codo
+python calibrar_pca9685.py 2  # marcador
+```
+
+Ejecuta una línea a la vez. Escribe **+** o **-** y pulsa Enter para variar 10 µs. Anota el pulso con el servo todavía activo. Sal con **q** o **Ctrl+C** para cortar su señal. Si el mecanismo llega a un tope o se traba, corta la señal de inmediato. Los límites iniciales de 1400 a 1600 µs son para explorar cerca del centro. Puedes ampliar la ventana con **--minimo** y **--maximo** de forma gradual, manteniendo el recorrido libre. Usa **--inicio** para retomar desde un pulso ya comprobado.
+
+| Canal | Posiciones a medir |
+|---|---|
+| 0 · Base | Usa +X como referencia de 0°. Mide el ángulo del primer eslabón en sentido antihorario desde arriba. Anota pares ángulo/pulso en el centro y cerca de ambos extremos útiles. |
+| 1 · Codo | Con ambos eslabones alineados y extendidos, el ángulo relativo es 0°. Mide el giro del segundo eslabón respecto al primero en sentido horario desde arriba. Anota pares ángulo/pulso en el centro y cerca de ambos extremos útiles. |
+| 2 · Marcador | Anota el pulso con la punta arriba y el pulso donde apenas toca el papel. |
+
+Registra el ángulo realmente alcanzado. Si el montaje no llega a 0° o 180°, anota el límite medido sin forzarlo.
