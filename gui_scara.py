@@ -1,14 +1,16 @@
 """Posicionamiento y simulación visual del SCARA del Taller 3."""
 
+import argparse
 import tkinter as tk
 from dataclasses import dataclass
 from math import cos, radians, sin
 from pathlib import Path
 from time import monotonic
-from tkinter import ttk
+from tkinter import messagebox, ttk
 from xml.etree import ElementTree
 
 from cinematica import Scara
+from control_scara import ControlScara, pulsos_xy
 
 
 @dataclass(frozen=True)
@@ -104,23 +106,28 @@ def caras_de_caja(pose, centro, tamaño):
 
 
 class Aplicacion:
-    def __init__(self, ventana, modelo):
+    def __init__(self, ventana, modelo, control=None, inicial=None):
         self.ventana = ventana
         self.modelo = modelo
-        self.q = modelo.cinematica.inversa(160, 100)
+        self.control = control
+        self.fallo = False
+        self.q = inicial if inicial is not None else modelo.cinematica.inversa(160, 100)
         self.z = modelo.z_arriba
-        self.objetivo = (160, 100)
+        self.objetivo = modelo.cinematica.directa(*self.q)
+        self.punta_lista = monotonic() + 1 if control else 0
         self.animacion = None
         self.contorno = [(x / 1000, y / 1000, 0) for x, y in modelo.cinematica.contorno()]
 
-        ventana.title("Taller 3 · Robot SCARA")
+        modo = "Robot físico" if control else "Simulación"
+        ventana.title(f"Taller 3 · SCARA · {modo}")
+        ventana.protocol("WM_DELETE_WINDOW", self.cerrar)
         ventana.minsize(640, 480)
         ventana.columnconfigure(0, weight=1)
         ventana.rowconfigure(1, weight=1)
         controles = ttk.Frame(ventana, padding=12)
         controles.grid(row=0, column=0, sticky="ew")
-        self.x = tk.StringVar(value="160")
-        self.y = tk.StringVar(value="100")
+        self.x = tk.StringVar(value=f"{self.objetivo[0]:.3f}" if control else "160")
+        self.y = tk.StringVar(value=f"{self.objetivo[1]:.3f}" if control else "100")
         for columna, (etiqueta, variable) in enumerate((("X (mm)", self.x), ("Y (mm)", self.y))):
             ttk.Label(controles, text=etiqueta).grid(row=0, column=2 * columna, padx=(0, 5))
             entrada = ttk.Entry(controles, textvariable=variable, width=9)
@@ -137,10 +144,40 @@ class Aplicacion:
         self.lienzo = tk.Canvas(ventana, bg="#f5f8fa", highlightthickness=0, width=760, height=470)
         self.lienzo.grid(row=1, column=0, sticky="nsew", padx=12)
         self.lienzo.bind("<Configure>", lambda _: self.dibujar())
-        self.estado = tk.StringVar(value="Simulación URDF. Ingresa un punto dentro del contorno.")
+        mensaje = (
+            "Punta arriba. Ingresa un punto dentro del rango físico."
+            if control else "Simulación URDF. Ingresa un punto dentro del contorno."
+        )
+        self.estado = tk.StringVar(value=mensaje)
         ttk.Label(ventana, textvariable=self.estado, padding=12).grid(row=2, column=0, sticky="ew")
 
+    def enviar(self, accion, *argumentos):
+        try:
+            accion(*argumentos)
+            return True
+        except OSError as error:
+            self.fallo = True
+            try:
+                self.control.cerrar()
+            except OSError:
+                pass
+            self.control = None
+            self.estado.set(f"Error I²C: {error}. Reinicia la aplicación para reconectar.")
+            return False
+
+    def cerrar(self):
+        if self.animacion is not None:
+            self.ventana.after_cancel(self.animacion)
+        if self.control:
+            try:
+                self.control.cerrar()
+            except OSError as error:
+                messagebox.showerror("Error I²C", f"No se pudo cortar la señal PWM: {error}")
+        self.ventana.destroy()
+
     def mover(self):
+        if self.fallo:
+            return
         try:
             x, y = (float(campo.get().replace(",", ".")) for campo in (self.x, self.y))
         except ValueError:
@@ -148,36 +185,62 @@ class Aplicacion:
             return
         try:
             destino = self.modelo.cinematica.inversa(x, y)
+            if self.control:
+                pulsos_xy(*destino)
         except ValueError as error:
             self.estado.set(str(error))
             return
 
         if self.animacion is not None:
             self.ventana.after_cancel(self.animacion)
+        self.animacion = None
         self.objetivo = (x, y)
+        if self.control and self.z != self.modelo.z_arriba:
+            if not self.enviar(self.control.marcador, True):
+                return
+            self.punta_lista = monotonic() + 1
         self.z = self.modelo.z_arriba
         self.estado.set(f"Moviendo a ({x:g}, {y:g}) mm.")
         origen = self.q
-        inicio = monotonic()
-        duracion = max(abs(a - b) for a, b in zip(origen, destino)) / 120
+        inicio = max(monotonic(), self.punta_lista)
+        velocidad = 25 if self.control else 120
+        duracion = max(abs(a - b) for a, b in zip(origen, destino)) / velocidad
 
         def avanzar():
-            fraccion = min(1.0, (monotonic() - inicio) / duracion) if duracion else 1.0
-            self.q = tuple(a + fraccion * (b - a) for a, b in zip(origen, destino))
+            fraccion = min(1.0, max(0.0, (monotonic() - inicio) / duracion)) if duracion else 1.0
+            posicion = destino if fraccion == 1 else tuple(
+                (1 - fraccion) * a + fraccion * b for a, b in zip(origen, destino)
+            )
+            if self.control and not self.enviar(self.control.mover, *posicion):
+                self.animacion = None
+                return
+            self.q = posicion
             self.dibujar()
             if fraccion < 1:
                 self.animacion = self.ventana.after(25, avanzar)
             else:
                 self.animacion = None
-                self.estado.set(f"Punto alcanzado en simulación: ({x:g}, {y:g}) mm.")
+                resultado = "Consigna enviada" if self.control else "Punto alcanzado en simulación"
+                self.estado.set(f"{resultado}: ({x:g}, {y:g}) mm.")
 
-        avanzar()
+        espera_ms = max(0, round((inicio - monotonic()) * 1000))
+        if espera_ms:
+            self.animacion = self.ventana.after(espera_ms, avanzar)
+        else:
+            avanzar()
 
     def cambiar_altura(self):
-        if self.animacion is not None:
+        if self.fallo:
+            return
+        if self.animacion is not None or monotonic() < self.punta_lista:
             self.estado.set("Espera a que termine el movimiento X/Y.")
             return
-        self.z = self.modelo.z_abajo if self.z == self.modelo.z_arriba else self.modelo.z_arriba
+        arriba = self.z != self.modelo.z_arriba
+        if self.control and not self.enviar(self.control.marcador, arriba):
+            return
+        if self.control:
+            self.punta_lista = monotonic() + 1
+        self.z = self.modelo.z_arriba if arriba else self.modelo.z_abajo
         self.dibujar()
 
     def dibujar(self):
@@ -228,9 +291,45 @@ class Aplicacion:
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--fisico", nargs=2, type=float, metavar=("BASE", "CODO"),
+        help="Activa el PCA9685. Indica los ángulos de la pose física actual.",
+    )
+    inicial = parser.parse_args().fisico
+    if inicial is not None:
+        try:
+            pulsos_xy(*inicial)
+        except ValueError as error:
+            parser.error(str(error))
+
     modelo = ModeloUrdf(Path(__file__).with_name("scara.urdf"))
     ventana = tk.Tk()
-    Aplicacion(ventana, modelo)
+    control = None
+    if inicial is not None:
+        confirmar = messagebox.askokcancel(
+            "Activar robot físico",
+            f"Coloca el brazo en base {inicial[0]:g}° y codo {inicial[1]:g}°. "
+            "Al aceptar, se levantará el marcador. El primer movimiento X/Y "
+            "partirá de la postura indicada.",
+            parent=ventana,
+        )
+        if not confirmar:
+            ventana.destroy()
+            return
+        try:
+            control = ControlScara()
+            control.marcador(True)
+        except (ImportError, OSError, ValueError) as error:
+            if control is not None:
+                try:
+                    control.cerrar()
+                except OSError:
+                    pass
+            messagebox.showerror("No se pudo activar el PCA9685", str(error), parent=ventana)
+            ventana.destroy()
+            return
+    Aplicacion(ventana, modelo, control, inicial)
     ventana.mainloop()
 
 
