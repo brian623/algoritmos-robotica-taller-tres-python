@@ -3,7 +3,7 @@
 import argparse
 import tkinter as tk
 from dataclasses import dataclass
-from math import cos, radians, sin
+from math import ceil, cos, radians, sin
 from pathlib import Path
 from time import monotonic
 from tkinter import messagebox, ttk
@@ -116,6 +116,8 @@ class Aplicacion:
         self.objetivo = modelo.cinematica.directa(*self.q)
         self.punta_lista = monotonic() + 1 if control else 0
         self.animacion = None
+        self.trazando = False
+        self.trazo = []
         self.contorno = [(x / 1000, y / 1000, 0) for x, y in modelo.cinematica.contorno()]
 
         modo = "Robot físico" if control else "Simulación"
@@ -137,9 +139,12 @@ class Aplicacion:
         ttk.Button(controles, text="Subir / bajar punta", command=self.cambiar_altura).grid(
             row=0, column=5, padx=(8, 0)
         )
+        ttk.Button(controles, text="Trazar cuadrado 20 × 20 mm", command=self.trazar_cuadrado).grid(
+            row=1, column=4, columnspan=2, sticky="e", pady=(9, 0)
+        )
         self.angulos = tk.StringVar()
         ttk.Label(controles, textvariable=self.angulos).grid(
-            row=1, column=0, columnspan=6, sticky="w", pady=(9, 0)
+            row=2, column=0, columnspan=6, sticky="w", pady=(9, 0)
         )
         self.lienzo = tk.Canvas(ventana, bg="#f5f8fa", highlightthickness=0, width=760, height=470)
         self.lienzo.grid(row=1, column=0, sticky="nsew", padx=12)
@@ -176,7 +181,7 @@ class Aplicacion:
         self.ventana.destroy()
 
     def mover(self):
-        if self.fallo:
+        if self.fallo or self.trazando:
             return
         try:
             x, y = (float(campo.get().replace(",", ".")) for campo in (self.x, self.y))
@@ -229,6 +234,76 @@ class Aplicacion:
         else:
             avanzar()
 
+    def trazar_cuadrado(self):
+        if self.fallo or self.animacion is not None:
+            return
+        vertices = [(160, 100), (180, 100), (180, 120), (160, 120), (160, 100)]
+        puntos = vertices[:1]
+        for (x, y), (u, v) in zip(vertices, vertices[1:]):
+            puntos.extend((x + (u-x)*i/40, y + (v-y)*i/40) for i in range(1, 41))
+        try:
+            angulos = [self.modelo.cinematica.inversa(*punto) for punto in puntos]
+            if self.control:
+                for pose in angulos:
+                    pulsos_xy(*pose)
+        except ValueError as error:
+            self.estado.set(str(error))
+            return
+        if self.control and not messagebox.askokcancel(
+            "Trazar cuadrado", "Fija la hoja bajo los cuatro vértices y confirma.",
+            parent=self.ventana,
+        ):
+            return
+
+        self.trazando = True
+        self.trazo.clear()
+        self.estado.set("Trazando cuadrado de 20 × 20 mm.")
+        pausa = 1000 if self.control else 150
+        intervalo = 50 if self.control else 15
+        origen = self.q
+        destino = angulos[0]
+        pasos = max(1, ceil(max(abs(a-b) for a, b in zip(origen, destino)) / 1.25))
+
+        def secuencia():
+            yield True, None, pausa
+            for i in range(1, pasos):
+                t = i / pasos
+                yield tuple((1-t)*a + t*b for a, b in zip(origen, destino)), None, intervalo
+            yield destino, None, pausa
+            yield False, None, pausa
+            for pose, punto in zip(angulos, puntos):
+                yield pose, punto, intervalo
+            yield None, None, pausa
+            yield True, None, pausa
+
+        acciones = iter(secuencia())
+
+        def avanzar():
+            self.animacion = None
+            paso = next(acciones, None)
+            if paso is None:
+                self.trazando = False
+                self.estado.set("Cuadrado terminado. Marcador arriba.")
+                return
+            orden, punto, demora = paso
+            if isinstance(orden, bool):
+                if self.control and not self.enviar(self.control.marcador, orden):
+                    self.trazando = False
+                    return
+                self.z = self.modelo.z_arriba if orden else self.modelo.z_abajo
+            elif orden is not None:
+                if self.control and not self.enviar(self.control.mover, *orden):
+                    self.trazando = False
+                    return
+                self.q = orden
+                self.objetivo = self.modelo.cinematica.directa(*orden)
+                if punto is not None:
+                    self.trazo.append(punto)
+            self.dibujar()
+            self.animacion = self.ventana.after(demora, avanzar)
+
+        avanzar()
+
     def cambiar_altura(self):
         if self.fallo:
             return
@@ -261,6 +336,11 @@ class Aplicacion:
             [coord for punto in self.contorno for coord in pantalla(punto)],
             fill="#627687", dash=(5, 4), width=2,
         )
+        if len(self.trazo) >= 2:
+            self.lienzo.create_line(
+                [coord for x, y in self.trazo for coord in pantalla((x / 1000, y / 1000, 0))],
+                fill="#a14816", width=3,
+            )
         for punto, etiqueta in (((radio, 0, 0), "+X"), ((0, radio, 0), "+Y")):
             self.lienzo.create_line(*pantalla((0, 0, 0)), *pantalla(punto), fill="#8292a0", arrow=tk.LAST)
             self.lienzo.create_text(*pantalla(punto), text=etiqueta, fill="#455565", anchor="sw")
