@@ -3,7 +3,7 @@
 import argparse
 import tkinter as tk
 from dataclasses import dataclass
-from math import ceil, cos, radians, sin
+from math import ceil, cos, hypot, radians, sin
 from pathlib import Path
 from time import monotonic
 from tkinter import messagebox, ttk
@@ -139,10 +139,10 @@ class Aplicacion:
         ttk.Button(controles, text="Subir / bajar punta", command=self.cambiar_altura).grid(
             row=0, column=5, padx=(8, 0)
         )
-        ttk.Button(controles, text="Trazar cuadrado 20 × 20 mm", command=self.trazar_cuadrado).grid(
+        ttk.Button(controles, text="Trazar logo de Nike", command=self.trazar_nike).grid(
             row=1, column=4, columnspan=2, sticky="e", pady=(9, 0)
         )
-        self.modo_trazo = tk.StringVar(value="Normal")
+        self.modo_trazo = tk.StringVar(value="Por pasos (2 mm)")
         ttk.Combobox(
             controles, textvariable=self.modo_trazo, state="readonly", width=19,
             values=("Normal", "Media velocidad", "Por pasos (2 mm)"),
@@ -239,19 +239,29 @@ class Aplicacion:
         else:
             avanzar()
 
-    def trazar_cuadrado(self):
+    def trazar_nike(self):
         if self.fallo or self.animacion is not None:
             return
         modo = self.modo_trazo.get()
         por_pasos = modo == "Por pasos (2 mm)"
-        divisiones = 10 if por_pasos else 40
-        vertices = [(160, 100), (180, 100), (180, 120), (160, 120), (160, 100)]
+        paso_mm = 2 if por_pasos else 0.5
+        # Contorno aproximado de la figura de la guía.
+        silueta = (
+            (1.00, 0.96), (0.40, 0.16), (0.30, 0.05), (0.22, 0.01),
+            (0.15, 0.01), (0.09, 0.06), (0.05, 0.15), (0.02, 0.29),
+            (0.01, 0.44), (0.02, 0.57), (0.05, 0.70), (0.09, 0.83),
+            (0.16, 0.97), (0.13, 0.79), (0.12, 0.65), (0.13, 0.54),
+            (0.17, 0.45), (0.23, 0.42), (0.30, 0.45), (1.00, 0.96),
+        )
+        vertices = [(160 + 40 * x, 100 + 15 * y) for x, y in silueta]
         puntos = vertices[:1]
         for (x, y), (u, v) in zip(vertices, vertices[1:]):
+            divisiones = max(1, ceil(hypot(u - x, v - y) / paso_mm))
             puntos.extend(
                 (x + (u - x) * i / divisiones, y + (v - y) * i / divisiones)
                 for i in range(1, divisiones + 1)
             )
+        puntos[-1] = puntos[0]
         try:
             angulos = [self.modelo.cinematica.inversa(*punto) for punto in puntos]
             if self.control:
@@ -261,14 +271,14 @@ class Aplicacion:
             self.estado.set(str(error))
             return
         if self.control and not messagebox.askokcancel(
-            "Trazar cuadrado", "Fija la hoja bajo los cuatro vértices y confirma.",
+            "Trazar logo de Nike", "Fija la hoja bajo la zona X 160–200 mm, Y 100–115 mm y confirma.",
             parent=self.ventana,
         ):
             return
 
         self.trazando = True
         self.trazo.clear()
-        self.estado.set(f"Trazando cuadrado de 20 × 20 mm · {modo}.")
+        self.estado.set(f"Trazando logo de Nike · {modo}.")
         pausa = 1000 if self.control else 150
         intervalo = 50 if self.control else 15
         intervalo_trazo = intervalo * (2 if modo == "Media velocidad" else 1)
@@ -297,7 +307,7 @@ class Aplicacion:
             paso = next(acciones, None)
             if paso is None:
                 self.trazando = False
-                self.estado.set("Cuadrado terminado. Marcador arriba.")
+                self.estado.set("Logo de Nike terminado. Marcador arriba.")
                 return
             orden, punto, demora = paso
             if isinstance(orden, bool):
