@@ -165,6 +165,10 @@ class Aplicacion:
         ttk.Label(controles, textvariable=self.angulos).grid(
             row=3, column=0, columnspan=6, sticky="w", pady=(9, 0)
         )
+        self.controles_dibujo = [
+            widget for widget in controles.winfo_children()
+            if isinstance(widget, (ttk.Button, ttk.Entry, ttk.Combobox))
+        ]
         self.lienzo = tk.Canvas(ventana, bg="#f5f8fa", highlightthickness=0, width=760, height=470)
         self.lienzo.grid(row=1, column=0, sticky="nsew", padx=12)
         self.lienzo.bind("<Configure>", lambda _: self.dibujar())
@@ -281,8 +285,14 @@ class Aplicacion:
         ])
         self.trazar_logo("Capitán América", trazos, "X 153–213 mm, Y 85–145 mm")
 
+    def bloquear_dibujo(self, activo):
+        self.trazando = activo
+        estado = "disabled" if activo else "!disabled"
+        for widget in self.controles_dibujo:
+            widget.state((estado,))
+
     def trazar_nombre(self):
-        if self.fallo or self.animacion is not None:
+        if self.fallo or self.trazando or self.animacion is not None:
             return
         try:
             nombre, trazos = trazos_nombre(self.nombre.get())
@@ -292,7 +302,7 @@ class Aplicacion:
         self.trazar_logo(nombre, trazos, "X 150–220 mm, Y 100–120 mm", cerrar=False)
 
     def trazar_logo(self, nombre, contornos, zona, cerrar=True):
-        if self.fallo or self.animacion is not None:
+        if self.fallo or self.trazando or self.animacion is not None:
             return
         modo = self.modo_trazo.get()
         por_pasos = modo == "Por pasos (2 mm)"
@@ -324,7 +334,7 @@ class Aplicacion:
         ):
             return
 
-        self.trazando = True
+        self.bloquear_dibujo(True)
         self.trazo.clear()
         self.estado.set(f"Trazando {nombre} · {modo}.")
         pausa = 1000 if self.control else 150
@@ -356,20 +366,24 @@ class Aplicacion:
             self.animacion = None
             paso = next(acciones, None)
             if paso is None:
-                self.trazando = False
-                self.estado.set(f"{nombre} terminado. Marcador arriba.")
+                mensaje = f"{nombre} terminado. Marcador arriba."
+                self.estado.set(mensaje)
+                try:
+                    messagebox.showinfo("Dibujo finalizado", mensaje, parent=self.ventana)
+                finally:
+                    self.bloquear_dibujo(False)
                 return
             orden, punto, demora = paso
             if isinstance(orden, bool):
                 if self.control and not self.enviar(self.control.marcador, orden):
-                    self.trazando = False
+                    self.bloquear_dibujo(False)
                     return
                 self.z = self.modelo.z_arriba if orden else self.modelo.z_abajo
                 if not orden:
                     self.trazo.append([])
             elif orden is not None:
                 if self.control and not self.enviar(self.control.mover, *orden):
-                    self.trazando = False
+                    self.bloquear_dibujo(False)
                     return
                 self.q = orden
                 self.objetivo = self.modelo.cinematica.directa(*orden)
@@ -383,7 +397,7 @@ class Aplicacion:
     def cambiar_altura(self):
         if self.fallo:
             return
-        if self.animacion is not None or monotonic() < self.punta_lista:
+        if self.trazando or self.animacion is not None or monotonic() < self.punta_lista:
             self.estado.set("Espera a que termine el movimiento X/Y.")
             return
         arriba = self.z != self.modelo.z_arriba
