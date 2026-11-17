@@ -11,6 +11,7 @@ from xml.etree import ElementTree
 
 from cinematica import Scara
 from control_scara import ControlScara, pulsos_xy
+from letras_scara import trazos_nombre
 
 
 @dataclass(frozen=True)
@@ -150,9 +151,19 @@ class Aplicacion:
             controles, textvariable=self.modo_trazo, state="readonly", width=19,
             values=("Normal", "Media velocidad", "Por pasos (2 mm)"),
         ).grid(row=1, column=0, columnspan=4, sticky="w", pady=(9, 0))
+        ttk.Label(controles, text="Nombre (6 a 8 caracteres)").grid(
+            row=2, column=0, columnspan=4, sticky="w", pady=(9, 0)
+        )
+        self.nombre = tk.StringVar()
+        entrada_nombre = ttk.Entry(controles, textvariable=self.nombre, width=14)
+        entrada_nombre.grid(row=2, column=4, sticky="ew", pady=(9, 0))
+        entrada_nombre.bind("<Return>", lambda _: self.trazar_nombre())
+        ttk.Button(controles, text="Dibujar nombre", command=self.trazar_nombre).grid(
+            row=2, column=5, sticky="w", padx=(8, 0), pady=(9, 0)
+        )
         self.angulos = tk.StringVar()
         ttk.Label(controles, textvariable=self.angulos).grid(
-            row=2, column=0, columnspan=6, sticky="w", pady=(9, 0)
+            row=3, column=0, columnspan=6, sticky="w", pady=(9, 0)
         )
         self.lienzo = tk.Canvas(ventana, bg="#f5f8fa", highlightthickness=0, width=760, height=470)
         self.lienzo.grid(row=1, column=0, sticky="nsew", padx=12)
@@ -270,7 +281,17 @@ class Aplicacion:
         ])
         self.trazar_logo("Capitán América", trazos, "X 153–213 mm, Y 85–145 mm")
 
-    def trazar_logo(self, nombre, contornos, zona):
+    def trazar_nombre(self):
+        if self.fallo or self.animacion is not None:
+            return
+        try:
+            nombre, trazos = trazos_nombre(self.nombre.get())
+        except ValueError as error:
+            self.estado.set(str(error))
+            return
+        self.trazar_logo(nombre, trazos, "X 150–220 mm, Y 100–120 mm", cerrar=False)
+
+    def trazar_logo(self, nombre, contornos, zona, cerrar=True):
         if self.fallo or self.animacion is not None:
             return
         modo = self.modo_trazo.get()
@@ -279,7 +300,7 @@ class Aplicacion:
         trayectorias = []
         try:
             for vertices in contornos:
-                if vertices[-1] != vertices[0]:
+                if cerrar and vertices[-1] != vertices[0]:
                     vertices = [*vertices, vertices[0]]
                 puntos = vertices[:1]
                 for (x, y), (u, v) in zip(vertices, vertices[1:]):
