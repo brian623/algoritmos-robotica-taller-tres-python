@@ -3,7 +3,7 @@
 import argparse
 import tkinter as tk
 from dataclasses import dataclass
-from math import ceil, cos, hypot, radians, sin
+from math import ceil, cos, hypot, radians, sin, tau
 from pathlib import Path
 from time import monotonic
 from tkinter import messagebox, ttk
@@ -135,12 +135,15 @@ class Aplicacion:
             entrada = ttk.Entry(controles, textvariable=variable, width=9)
             entrada.grid(row=0, column=2 * columna + 1, padx=(0, 12))
             entrada.bind("<Return>", lambda _: self.mover())
-        ttk.Button(controles, text="Mover a X/Y", command=self.mover).grid(row=0, column=4)
+        ttk.Button(controles, text="Mover manualmente", command=self.mover).grid(row=0, column=4)
         ttk.Button(controles, text="Subir / bajar punta", command=self.cambiar_altura).grid(
             row=0, column=5, padx=(8, 0)
         )
-        ttk.Button(controles, text="Trazar logo de Nike", command=self.trazar_nike).grid(
-            row=1, column=4, columnspan=2, sticky="e", pady=(9, 0)
+        ttk.Button(controles, text="Trazar Nike", command=self.trazar_nike).grid(
+            row=1, column=4, sticky="e", pady=(9, 0)
+        )
+        ttk.Button(controles, text="Trazar Capitán América", command=self.trazar_escudo).grid(
+            row=1, column=5, sticky="e", padx=(8, 0), pady=(9, 0)
         )
         self.modo_trazo = tk.StringVar(value="Por pasos (2 mm)")
         ttk.Combobox(
@@ -240,11 +243,6 @@ class Aplicacion:
             avanzar()
 
     def trazar_nike(self):
-        if self.fallo or self.animacion is not None:
-            return
-        modo = self.modo_trazo.get()
-        por_pasos = modo == "Por pasos (2 mm)"
-        paso_mm = 2 if por_pasos else 0.5
         # Contorno aproximado de la figura de la guía.
         silueta = (
             (1.00, 0.96), (0.40, 0.16), (0.30, 0.05), (0.22, 0.01),
@@ -253,52 +251,83 @@ class Aplicacion:
             (0.16, 0.97), (0.13, 0.79), (0.12, 0.65), (0.13, 0.54),
             (0.17, 0.45), (0.23, 0.42), (0.30, 0.45), (1.00, 0.96),
         )
-        vertices = [(160 + 40 * x, 100 + 15 * y) for x, y in silueta]
-        puntos = vertices[:1]
-        for (x, y), (u, v) in zip(vertices, vertices[1:]):
-            divisiones = max(1, ceil(hypot(u - x, v - y) / paso_mm))
-            puntos.extend(
-                (x + (u - x) * i / divisiones, y + (v - y) * i / divisiones)
-                for i in range(1, divisiones + 1)
-            )
-        puntos[-1] = puntos[0]
+        vertices = [(150 + 70 * x, 100 + 27 * y) for x, y in silueta]
+        self.trazar_logo("Nike", [vertices], "X 150–220 mm, Y 100–127 mm")
+
+    def trazar_escudo(self):
+        centro_x, centro_y = 183, 115
+        trazos = []
+        for radio in (30, 23, 16):
+            trazos.append([
+                (centro_x + radio * cos(tau * i / 100),
+                 centro_y + radio * sin(tau * i / 100))
+                for i in range(100)
+            ])
+        trazos.append([
+            (centro_x + (14 if i % 2 == 0 else 5.5) * cos(tau * (0.25 + i / 10)),
+             centro_y + (14 if i % 2 == 0 else 5.5) * sin(tau * (0.25 + i / 10)))
+            for i in range(10)
+        ])
+        self.trazar_logo("Capitán América", trazos, "X 153–213 mm, Y 85–145 mm")
+
+    def trazar_logo(self, nombre, contornos, zona):
+        if self.fallo or self.animacion is not None:
+            return
+        modo = self.modo_trazo.get()
+        por_pasos = modo == "Por pasos (2 mm)"
+        paso_mm = 2 if por_pasos else 0.5
+        trayectorias = []
         try:
-            angulos = [self.modelo.cinematica.inversa(*punto) for punto in puntos]
-            if self.control:
-                for pose in angulos:
-                    pulsos_xy(*pose)
+            for vertices in contornos:
+                if vertices[-1] != vertices[0]:
+                    vertices = [*vertices, vertices[0]]
+                puntos = vertices[:1]
+                for (x, y), (u, v) in zip(vertices, vertices[1:]):
+                    divisiones = max(1, ceil(hypot(u - x, v - y) / paso_mm))
+                    puntos.extend(
+                        (x + (u - x) * i / divisiones, y + (v - y) * i / divisiones)
+                        for i in range(1, divisiones)
+                    )
+                    puntos.append((u, v))
+                angulos = [self.modelo.cinematica.inversa(*punto) for punto in puntos]
+                if self.control:
+                    for pose in angulos:
+                        pulsos_xy(*pose)
+                trayectorias.append(list(zip(angulos, puntos)))
         except ValueError as error:
             self.estado.set(str(error))
             return
         if self.control and not messagebox.askokcancel(
-            "Trazar logo de Nike", "Fija la hoja bajo la zona X 160–200 mm, Y 100–115 mm y confirma.",
+            f"Trazar {nombre}", f"Fija la hoja bajo la zona {zona} y confirma.",
             parent=self.ventana,
         ):
             return
 
         self.trazando = True
         self.trazo.clear()
-        self.estado.set(f"Trazando logo de Nike · {modo}.")
+        self.estado.set(f"Trazando {nombre} · {modo}.")
         pausa = 1000 if self.control else 150
         intervalo = 50 if self.control else 15
         intervalo_trazo = intervalo * (2 if modo == "Media velocidad" else 1)
         if por_pasos:
             intervalo_trazo = 300
-        origen = self.q
-        destino = angulos[0]
-        pasos = max(1, ceil(max(abs(a-b) for a, b in zip(origen, destino)) / 1.25))
-
         def secuencia():
             yield True, None, pausa
-            for i in range(1, pasos):
-                t = i / pasos
-                yield tuple((1-t)*a + t*b for a, b in zip(origen, destino)), None, intervalo
-            yield destino, None, pausa
-            yield False, None, pausa
-            for pose, punto in zip(angulos, puntos):
-                yield pose, punto, intervalo_trazo
-            yield None, None, pausa
-            yield True, None, pausa
+            for trayectoria in trayectorias:
+                origen = self.q
+                destino = trayectoria[0][0]
+                cambio = max(abs(a - b) for a, b in zip(origen, destino))
+                pasos = max(1, ceil(cambio / 1.25))
+                for i in range(1, pasos):
+                    t = i / pasos
+                    pose = tuple((1 - t) * a + t * b for a, b in zip(origen, destino))
+                    yield pose, None, intervalo
+                yield destino, None, pausa
+                yield False, None, pausa
+                for pose, punto in trayectoria:
+                    yield pose, punto, intervalo_trazo
+                yield None, None, pausa
+                yield True, None, pausa
 
         acciones = iter(secuencia())
 
@@ -307,7 +336,7 @@ class Aplicacion:
             paso = next(acciones, None)
             if paso is None:
                 self.trazando = False
-                self.estado.set("Logo de Nike terminado. Marcador arriba.")
+                self.estado.set(f"{nombre} terminado. Marcador arriba.")
                 return
             orden, punto, demora = paso
             if isinstance(orden, bool):
@@ -315,6 +344,8 @@ class Aplicacion:
                     self.trazando = False
                     return
                 self.z = self.modelo.z_arriba if orden else self.modelo.z_abajo
+                if not orden:
+                    self.trazo.append([])
             elif orden is not None:
                 if self.control and not self.enviar(self.control.mover, *orden):
                     self.trazando = False
@@ -322,7 +353,7 @@ class Aplicacion:
                 self.q = orden
                 self.objetivo = self.modelo.cinematica.directa(*orden)
                 if punto is not None:
-                    self.trazo.append(punto)
+                    self.trazo[-1].append(punto)
             self.dibujar()
             self.animacion = self.ventana.after(demora, avanzar)
 
@@ -360,11 +391,12 @@ class Aplicacion:
             [coord for punto in self.contorno for coord in pantalla(punto)],
             fill="#627687", dash=(5, 4), width=2,
         )
-        if len(self.trazo) >= 2:
-            self.lienzo.create_line(
-                [coord for x, y in self.trazo for coord in pantalla((x / 1000, y / 1000, 0))],
-                fill="#a14816", width=3,
-            )
+        for trazo in self.trazo:
+            if len(trazo) >= 2:
+                self.lienzo.create_line(
+                    [coord for x, y in trazo for coord in pantalla((x / 1000, y / 1000, 0))],
+                    fill="#a14816", width=3,
+                )
         for punto, etiqueta in (((radio, 0, 0), "+X"), ((0, radio, 0), "+Y")):
             self.lienzo.create_line(*pantalla((0, 0, 0)), *pantalla(punto), fill="#8292a0", arrow=tk.LAST)
             self.lienzo.create_text(*pantalla(punto), text=etiqueta, fill="#455565", anchor="sw")
