@@ -142,9 +142,10 @@ class Aplicacion:
         ttk.Button(controles, text="Trazar cuadrado 20 × 20 mm", command=self.trazar_cuadrado).grid(
             row=1, column=4, columnspan=2, sticky="e", pady=(9, 0)
         )
-        self.media_velocidad = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
-            controles, text="Media velocidad", variable=self.media_velocidad
+        self.modo_trazo = tk.StringVar(value="Normal")
+        ttk.Combobox(
+            controles, textvariable=self.modo_trazo, state="readonly", width=19,
+            values=("Normal", "Media velocidad", "Por pasos (2 mm)"),
         ).grid(row=1, column=0, columnspan=4, sticky="w", pady=(9, 0))
         self.angulos = tk.StringVar()
         ttk.Label(controles, textvariable=self.angulos).grid(
@@ -241,10 +242,16 @@ class Aplicacion:
     def trazar_cuadrado(self):
         if self.fallo or self.animacion is not None:
             return
+        modo = self.modo_trazo.get()
+        por_pasos = modo == "Por pasos (2 mm)"
+        divisiones = 10 if por_pasos else 40
         vertices = [(160, 100), (180, 100), (180, 120), (160, 120), (160, 100)]
         puntos = vertices[:1]
         for (x, y), (u, v) in zip(vertices, vertices[1:]):
-            puntos.extend((x + (u-x)*i/40, y + (v-y)*i/40) for i in range(1, 41))
+            puntos.extend(
+                (x + (u - x) * i / divisiones, y + (v - y) * i / divisiones)
+                for i in range(1, divisiones + 1)
+            )
         try:
             angulos = [self.modelo.cinematica.inversa(*punto) for punto in puntos]
             if self.control:
@@ -261,12 +268,12 @@ class Aplicacion:
 
         self.trazando = True
         self.trazo.clear()
-        media = self.media_velocidad.get()
-        modo = "media velocidad" if media else "velocidad normal"
-        self.estado.set(f"Trazando cuadrado de 20 × 20 mm a {modo}.")
+        self.estado.set(f"Trazando cuadrado de 20 × 20 mm · {modo}.")
         pausa = 1000 if self.control else 150
         intervalo = 50 if self.control else 15
-        intervalo_trazo = intervalo * (2 if media else 1)
+        intervalo_trazo = intervalo * (2 if modo == "Media velocidad" else 1)
+        if por_pasos:
+            intervalo_trazo = 300
         origen = self.q
         destino = angulos[0]
         pasos = max(1, ceil(max(abs(a-b) for a, b in zip(origen, destino)) / 1.25))

@@ -3,7 +3,7 @@
 BASE = ((0, 600), (90, 1800), (135, 2500))
 CODO = ((0, 1970), (90, 740), (100, 600))
 MARCADOR_ARRIBA = 800
-MARCADOR_ABAJO = 1870
+MARCADOR_ABAJO = 1890
 
 
 def interpolar(angulo, referencias, nombre):
