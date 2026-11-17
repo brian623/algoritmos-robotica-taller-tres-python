@@ -142,6 +142,10 @@ class Aplicacion:
         ttk.Button(controles, text="Trazar cuadrado 20 × 20 mm", command=self.trazar_cuadrado).grid(
             row=1, column=4, columnspan=2, sticky="e", pady=(9, 0)
         )
+        self.media_velocidad = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            controles, text="Media velocidad", variable=self.media_velocidad
+        ).grid(row=1, column=0, columnspan=4, sticky="w", pady=(9, 0))
         self.angulos = tk.StringVar()
         ttk.Label(controles, textvariable=self.angulos).grid(
             row=2, column=0, columnspan=6, sticky="w", pady=(9, 0)
@@ -257,9 +261,12 @@ class Aplicacion:
 
         self.trazando = True
         self.trazo.clear()
-        self.estado.set("Trazando cuadrado de 20 × 20 mm.")
+        media = self.media_velocidad.get()
+        modo = "media velocidad" if media else "velocidad normal"
+        self.estado.set(f"Trazando cuadrado de 20 × 20 mm a {modo}.")
         pausa = 1000 if self.control else 150
         intervalo = 50 if self.control else 15
+        intervalo_trazo = intervalo * (2 if media else 1)
         origen = self.q
         destino = angulos[0]
         pasos = max(1, ceil(max(abs(a-b) for a, b in zip(origen, destino)) / 1.25))
@@ -272,7 +279,7 @@ class Aplicacion:
             yield destino, None, pausa
             yield False, None, pausa
             for pose, punto in zip(angulos, puntos):
-                yield pose, punto, intervalo
+                yield pose, punto, intervalo_trazo
             yield None, None, pausa
             yield True, None, pausa
 
