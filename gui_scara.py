@@ -106,6 +106,9 @@ def caras_de_caja(pose, centro, tamaño):
         yield [vertices[i] for i in indices]
 
 
+HOME = (90.0, 90.0)
+
+
 class Aplicacion:
     def __init__(self, ventana, modelo, control=None, inicial=None):
         self.ventana = ventana
@@ -161,9 +164,25 @@ class Aplicacion:
         ttk.Button(controles, text="Dibujar nombre", command=self.trazar_nombre).grid(
             row=2, column=5, sticky="w", padx=(8, 0), pady=(9, 0)
         )
+        self.grados = (tk.StringVar(value="90"), tk.StringVar(value="90"))
+        for columna, (etiqueta, variable) in enumerate(
+            zip(("Base θ1 (°)", "Codo θ2 (°)"), self.grados)
+        ):
+            ttk.Label(controles, text=etiqueta).grid(
+                row=3, column=2 * columna, padx=(0, 5), pady=(9, 0)
+            )
+            entrada = ttk.Entry(controles, textvariable=variable, width=9)
+            entrada.grid(row=3, column=2 * columna + 1, padx=(0, 12), pady=(9, 0))
+            entrada.bind("<Return>", lambda _: self.mover_grados())
+        ttk.Button(controles, text="Mover desde Home", command=self.mover_grados).grid(
+            row=3, column=4, pady=(9, 0)
+        )
+        ttk.Button(controles, text="Ir a Home", command=self.ir_home).grid(
+            row=3, column=5, pady=(9, 0)
+        )
         self.angulos = tk.StringVar()
         ttk.Label(controles, textvariable=self.angulos).grid(
-            row=3, column=0, columnspan=6, sticky="w", pady=(9, 0)
+            row=4, column=0, columnspan=6, sticky="w", pady=(9, 0)
         )
         self.controles_dibujo = [
             widget for widget in controles.winfo_children()
@@ -219,12 +238,56 @@ class Aplicacion:
             self.estado.set(str(error))
             return
 
+        self.animar_destino(destino, (x, y))
+
+    def ir_home(self):
+        self.mover_desde_home(HOME)
+
+    def mover_grados(self):
+        if self.fallo or self.trazando or self.animacion is not None:
+            return
+        try:
+            grados = tuple(float(campo.get().replace(",", ".")) for campo in self.grados)
+        except ValueError:
+            self.estado.set("Ingresa números válidos para base y codo.")
+            return
+        self.mover_desde_home(grados)
+
+    def mover_desde_home(self, grados):
+        if self.fallo or self.trazando or self.animacion is not None:
+            return
+        cin = self.modelo.cinematica
+        try:
+            # La directa obtiene X/Y y la inversa selecciona la postura codo abajo.
+            punto = cin.directa(*grados)
+            destino = cin.inversa(*punto)
+            if self.control:
+                pulsos_xy(*HOME)
+                pulsos_xy(*destino)
+        except ValueError as error:
+            self.estado.set(str(error))
+            return
+
+        self.bloquear_dibujo(True)
+
+        def salir_de_home():
+            if grados == HOME:
+                self.bloquear_dibujo(False)
+                return
+            self.animar_destino(destino, punto, lambda: self.bloquear_dibujo(False))
+
+        self.animar_destino(HOME, cin.directa(*HOME), salir_de_home)
+
+    def animar_destino(self, destino, punto, al_terminar=None):
         if self.animacion is not None:
             self.ventana.after_cancel(self.animacion)
         self.animacion = None
-        self.objetivo = (x, y)
+        x, y = punto
+        self.objetivo = punto
         if self.control and self.z != self.modelo.z_arriba:
             if not self.enviar(self.control.marcador, True):
+                if al_terminar:
+                    self.bloquear_dibujo(False)
                 return
             self.punta_lista = monotonic() + 1
         self.z = self.modelo.z_arriba
@@ -233,14 +296,19 @@ class Aplicacion:
         inicio = max(monotonic(), self.punta_lista)
         velocidad = 25 if self.control else 120
         duracion = max(abs(a - b) for a, b in zip(origen, destino)) / velocidad
+        if al_terminar:
+            duracion *= 1.5
 
         def avanzar():
             fraccion = min(1.0, max(0.0, (monotonic() - inicio) / duracion)) if duracion else 1.0
+            t = fraccion**2 * (3 - 2 * fraccion) if al_terminar else fraccion
             posicion = destino if fraccion == 1 else tuple(
-                (1 - fraccion) * a + fraccion * b for a, b in zip(origen, destino)
+                a + t * (b - a) for a, b in zip(origen, destino)
             )
             if self.control and not self.enviar(self.control.mover, *posicion):
                 self.animacion = None
+                if al_terminar:
+                    self.bloquear_dibujo(False)
                 return
             self.q = posicion
             self.dibujar()
@@ -250,6 +318,15 @@ class Aplicacion:
                 self.animacion = None
                 resultado = "Consigna enviada" if self.control else "Punto alcanzado en simulación"
                 self.estado.set(f"{resultado}: ({x:g}, {y:g}) mm.")
+                if al_terminar:
+                    if self.control:
+                        # Los servos carecen de realimentación de posición.
+                        def finalizar():
+                            self.animacion = None
+                            al_terminar()
+                        self.animacion = self.ventana.after(500, finalizar)
+                    else:
+                        al_terminar()
 
         espera_ms = max(0, round((inicio - monotonic()) * 1000))
         if espera_ms:
